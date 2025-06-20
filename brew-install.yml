@@ -1,0 +1,83 @@
+---
+- name: Homebrew Install
+  hosts: localhost
+  connection: local
+  become: yes
+
+  vars:
+    homebrew_install_path: "/home/linuxbrew/.linuxbrew"
+    homebrew_user: "{{ ansible_user | default(ansible_env.USER) }}"
+
+  pre_tasks:
+    - name: Ensure the target user exists.
+      ansible.builtin.user:
+        name: "{{ homebrew_user }}"
+        state: present
+        shell: /bin/bash # Ensure the user has a bash shell.
+
+  tasks:
+    - name: Install build-essential and other prerequisites.
+      ansible.builtin.apt:
+        name:
+          - build-essential
+          - curl
+          - git
+        state: present
+        update_cache: yes
+
+    - name: Check if Homebrew is already installed for the user.
+      ansible.builtin.stat:
+        path: "{{ homebrew_install_path }}/bin/brew"
+      register: brew_installed
+      become: no
+         
+    - name: Download and run the Homebrew installation script
+      ansible.builtin.shell:
+        cmd: NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+      args:
+        chdir: "/home/{{ homebrew_user }}" # Run from the user's home directory
+        creates: "{{ homebrew_install_path }}/bin/brew" # Only run if brew doesn't exist
+      environment:
+        HOME: "/home/{{ homebrew_user }}" # Ensure HOME is set correctly for the user
+      become: yes # Use sudo to initially create /home/linuxbrew if needed
+      become_user: "{{ homebrew_user }}" # Switch to the target user for the actual install script
+      when: not brew_installed.stat.exists
+
+    - name: Add Homebrew to PATH for the user (bashrc)
+      ansible.builtin.lineinfile:
+        path: "/home/{{ homebrew_user }}/.bashrc"
+        line: 'eval "$({{ homebrew_install_path }}/bin/brew shellenv)"'
+        create: yes
+        owner: "{{ homebrew_user }}"
+        group: "{{ homebrew_user }}"
+        mode: '0644'
+      become: yes
+      become_user: "{{ homebrew_user }}"
+
+    - name: Add Homebrew to PATH for the user (profile - for non-interactive shells/logins)
+      ansible.builtin.lineinfile:
+        path: "/home/{{ homebrew_user }}/.profile"
+        line: 'eval "$({{ homebrew_install_path }}/bin/brew shellenv)"'
+        create: yes
+        owner: "{{ homebrew_user }}"
+        group: "{{ homebrew_user }}"
+        mode: '0644'
+      become: yes
+      become_user: "{{ homebrew_user }}"
+
+    - name: Run brew doctor to check for issues (optional, for verification)
+      ansible.builtin.command: "{{ homebrew_install_path }}/bin/brew doctor"
+      register: brew_doctor_output
+      changed_when: false # This command doesn't change anything
+      failed_when: "'Your system is ready to brew' not in brew_doctor_output.stdout"
+      become: no
+      become_user: "{{ homebrew_user }}"
+      environment:
+        PATH: "{{ homebrew_install_path }}/bin:{{ homebrew_install_path }}/sbin:{{ ansible_env.PATH }}"
+      # Temporarily set PATH so brew command is found even if shellenv hasn't been sourced in the current session
+    
+    - name: Display brew doctor output
+      ansible.builtin.debug:
+        var: brew_doctor_output.stdout_lines
+      when: brew_doctor_output is defined and brew_doctor_output.stdout_lines | length > 0
+          
