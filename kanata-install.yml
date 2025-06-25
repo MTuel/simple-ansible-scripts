@@ -1,6 +1,6 @@
 ---
-- name: Install and Setup Kanata on Debian-based Systems (Build from Source)
-  hosts: your_debian_servers # IMPORTANT: Replace with your actual Debian target group or hostname
+- name: Install and Setup Kanata on Debian-based Systems (from Homebrew)
+  hosts: localhost # IMPORTANT: Replace with your actual Debian target group or hostname
   become: true # Requires root privileges for system-wide tasks
 
   vars:
