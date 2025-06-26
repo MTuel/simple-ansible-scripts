@@ -1,0 +1,142 @@
+---
+- name: Install and Setup Kanata on Debian-based Systems (from Homebrew)
+  hosts: localhost # IMPORTANT: Replace with your actual Debian target group or hostname
+  become: false # Run as normal user by default, escalate only when needed
+
+  vars:
+    kanata_repo_url: "https://github.com/jtroo/kanata.git"
+    kanata_install_dir: "/opt/kanata" # Directory where Kanata source code will be cloned
+    kanata_bin_path: "/usr/local/bin/kanata" # Destination for the compiled Kanata executable
+    target_user: "{{ ansible_user_id }}"
+
+  tasks:
+    - name: 0. Get target user information
+      ansible.builtin.getent:
+        database: passwd
+        key: "{{ target_user }}"
+
+    - name: 1. Set target user home directory
+      ansible.builtin.set_fact:
+        target_user_home: "{{ getent_passwd[target_user][4] }}"
+        kanata_config_dir: "{{ getent_passwd[target_user][4] }}/.config/kanata"
+        kanata_service_dir: "{{ getent_passwd[target_user][4] }}/.config/systemd/user"
+
+    - name: 2. Fail if 'target_user' is not properly defined
+      ansible.builtin.fail:
+        msg: >-
+          The 'target_user' variable must be set. By default, this is set to {{ ansible_user }}
+          (the user Ansible connects as). If you need to run Kanata under a different user,
+          please explicitly set 'target_user: <your_desired_username>' in your playbook vars.
+      when: target_user is not defined or target_user == ""
+
+    - name: 3. Check if Homebrew is installed
+      ansible.builtin.stat:
+        path: "{{ target_user_home }}/.linuxbrew/bin/brew"
+      register: homebrew_installed
+
+    - name: 4. Install Kanata via Homebrew
+      ansible.builtin.command:
+        cmd: "{{ target_user_home }}/.linuxbrew/bin/brew install kanata"
+      when: homebrew_installed.stat.exists
+      register: kanata_install_result
+      changed_when: "'already installed' not in kanata_install_result.stderr"
+
+    - name: 5. Create 'uinput' group if it doesn't exist
+      ansible.builtin.group:
+        name: uinput
+        state: present
+        system: true # Create as a system group
+      become: true
+
+    - name: 6. Add target user to 'input' and 'uinput' groups
+      ansible.builtin.user:
+        name: "{{ target_user }}"
+        groups: input,uinput # Add to both groups
+        append: true # Append to existing groups rather than replacing
+      become: true
+
+    - name: 7. Create udev rule for uinput device
+      ansible.builtin.copy:
+        content: KERNEL=="uinput", MODE="0660", GROUP="uinput", OPTIONS+="static_node=uinput"
+        dest: "/etc/udev/rules.d/99-uinput.rules"
+        mode: '0644'
+        owner: root
+        group: root
+      become: true
+
+    - name: 8. Reload udev rules
+      ansible.builtin.command: udevadm control --reload-rules
+      changed_when: true # Always report as changed for control commands
+      become: true
+
+    - name: 9. Trigger udev to apply rules for input subsystem
+      ansible.builtin.command: udevadm trigger --subsystem-match=input --action=add
+      changed_when: true # Always report as changed
+      become: true
+
+    - name: 10. Ensure 'uinput' kernel module is loaded and persistent
+      community.general.modprobe:
+        name: uinput
+        state: present
+        persistent: present # Add to /etc/modules-load.d/ or similar to load on boot
+      become: true
+
+    - name: 11. Create user's systemd service directory
+      ansible.builtin.file:
+        path: "{{ kanata_service_dir }}"
+        state: directory
+        mode: '0700' # Permissions for user-only access
+        owner: "{{ target_user }}"
+        group: "{{ target_user }}"
+      # No become needed - creating in user's home directory
+
+    - name: 12. Create kanata.service file for user Systemd
+      ansible.builtin.copy:
+        dest: "{{ kanata_service_dir }}/kanata.service"
+        content: |
+          [Unit]
+          Description=Kanata Keyboard Remapper
+          Documentation=https://github.com/jtroo/kanata/blob/main/docs/setup-linux.md
+          After=systemd-user-sessions.service # Start after user session is established
+
+          [Service]
+          ExecStart={{ kanata_bin_path }} -c {{ kanata_config_dir }}/kanata.kbd
+          Restart=on-failure
+          RestartSec=5 # Wait 5 seconds before restarting on failure
+          Environment=RUST_BACKTRACE=full # Useful for debugging if Kanata crashes
+
+          [Install]
+          WantedBy=default.target # Start automatically with the user's default target
+
+        mode: '0644'
+        owner: "{{ target_user }}"
+        group: "{{ target_user }}"
+      # No become needed - creating in user's home directory
+
+    - name: 13. Reload user systemd daemon
+      ansible.builtin.systemd:
+        name: kanata.service
+        scope: user # Important for user services
+        daemon_reload: true
+      become: false # Reload as the target user
+      become_user: "{{ target_user }}"
+
+    - name: 14. Enable and start kanata.service
+      ansible.builtin.systemd:
+        name: kanata.service
+        scope: user
+        enabled: true # Enable to start on boot (user login)
+        state: started # Start the service immediately
+
+    - name: 15. Notify user about Kanata configuration file
+      ansible.builtin.debug:
+        msg: |
+          Kanata has been successfully installed and its user-level systemd service has been configured and started.
+
+          IMPORTANT:
+          You still need to create your Kanata configuration file (e.g., using the example provided in the first turn) at:
+          {{ kanata_config_dir }}/kanata.kbd
+
+          The 'kanata.service' expects this file to exist and contain your desired keymaps to function correctly.
+          After creating or modifying your 'kanata.kbd' file, you can restart the Kanata service (as the {{ target_user }} user) using:
+          systemctl --user restart kanata.service
