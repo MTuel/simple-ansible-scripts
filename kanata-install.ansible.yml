@@ -6,7 +6,7 @@
   vars:
     kanata_repo_url: "https://github.com/jtroo/kanata.git"
     kanata_install_dir: "/opt/kanata" # Directory where Kanata source code will be cloned
-    kanata_bin_path: "/usr/local/bin/kanata" # Destination for the compiled Kanata executable
+    kanata_bin_path: "/home/linuxbrew/.linuxbrew/bin/kanata" # Destination for the compiled Kanata executable
     target_user: "{{ ansible_user_id }}"
 
   tasks:
@@ -97,16 +97,16 @@
           [Unit]
           Description=Kanata Keyboard Remapper
           Documentation=https://github.com/jtroo/kanata/blob/main/docs/setup-linux.md
-          After=systemd-user-sessions.service # Start after user session is established
+          After=systemd-user-sessions.service 
 
           [Service]
           ExecStart={{ kanata_bin_path }} -c {{ kanata_config_dir }}/kanata.kbd
           Restart=on-failure
           RestartSec=5 # Wait 5 seconds before restarting on failure
-          Environment=RUST_BACKTRACE=full # Useful for debugging if Kanata crashes
+          Environment=RUST_BACKTRACE=full
 
           [Install]
-          WantedBy=default.target # Start automatically with the user's default target
+          WantedBy=default.target
 
         mode: '0644'
         owner: "{{ target_user }}"
