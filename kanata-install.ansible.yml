@@ -97,10 +97,10 @@
           [Unit]
           Description=Kanata Keyboard Remapper
           Documentation=https://github.com/jtroo/kanata/blob/main/docs/setup-linux.md
-          After=systemd-user-sessions.service 
+          After=systemd-user-sessions.service
 
           [Service]
-          ExecStart={{ kanata_bin_path }} -c {{ kanata_config_dir }}/kanata.kbd
+          ExecStart={{ kanata_bin_path }} -c {{ kanata_config_dir }}/config.kbd
           Restart=on-failure
           RestartSec=5 # Wait 5 seconds before restarting on failure
           Environment=RUST_BACKTRACE=full
